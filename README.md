@@ -28,7 +28,8 @@ See `./train-vqgan.py --help` for options.
 
 ## Example Outputs
 
-After training for 6 hours on a Razer Blade 16" with a NVIDIA 4090-mobile (16 GB VRAM), we see these results:
+After training for 6 hours on a Razer Blade 16" with a NVIDIA 4090-mobile (16 GB VRAM), we see the following results.  They're not "amazing," but perhaps training for longer will help. 
+
 
 ### Reconstructed Images:
 ![Example image output](examples/example_demo.png)
@@ -37,3 +38,8 @@ Top row: Input images. Bottom row: Reconstructions.
 
 ### Codebook Vectors
 ![Example codebook vector histograms](examples/example_histogram.png)
+
+## TODO:
+- Add attention aka "non-local blocks"
+- Make sure the GAN part is really helping/learning
+  
