@@ -395,7 +395,7 @@ def main():
     
     # Training parameters
     parser.add_argument('--batch-size', type=int, default=84)
-    parser.add_argument('--epochs', type=int, default=1000000, help='number of epoch. (just let it keep training for hours/days/weeks/etc.)')
+    parser.add_argument('--epochs', type=int, default=1000000, help='number of epochs. (just let it keep training for hours/days/weeks/etc.)')
     parser.add_argument('--base-lr', type=float, default=1e-4, help='base learning rate for batch size of 32')
     parser.add_argument('--image-size', type=int, default=64, help='will rescale images to squares of (image-size, image-size)')
     parser.add_argument('--warmup-epochs', type=int, default=15, help='number of epochs before enabling adversarial loss')   
