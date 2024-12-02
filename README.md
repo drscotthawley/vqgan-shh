@@ -1,7 +1,8 @@
 # vqgan-shh
-my lil vqgan exercise
 
-This repo is not intended for public consumption. Just a place to dump my code. That said, it's still open and MIT-licensed, so do what you like.
+*My lil vqgan exercise. Uses Oxford Flowers dataset.*
+
+This repo is not intended for public use. Just a place to store work in progress. That said, it's still open and MIT-licensed, so do what you like.
 
 ## Install
 

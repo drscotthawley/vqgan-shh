@@ -412,7 +412,7 @@ def main():
     parser.add_argument('--vq-num-embeddings', type=int, default=1024, help='aka codebook length')
     parser.add_argument('--vq-embedding-dim', type=int, default=16*16, help='dims of codebook vectors')
     parser.add_argument('--num-downsamples', type=int, default=2, help='total downsampling is 2**[this]')
-    parser.add_argument('--project-name', type=str, default="flower-vqgan", help='WandB project name')
+    parser.add_argument('--project-name', type=str, default="vqgan-shh", help='WandB project name')
 
     args = parser.parse_args()
     args.learning_rate = args.base_lr * math.sqrt(args.batch_size / 32)
