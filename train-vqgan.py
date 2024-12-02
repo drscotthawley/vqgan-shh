@@ -186,7 +186,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
     source_imgs = batch[0].to(device)
     target_imgs = source_imgs
 
-    # Pre-warmup behavior - should be exactly as it was before
+    # Pre-warmup behavior - sectioned this off b/c one time I broke everything when I added the GAN part. 
     if epoch <= config.warmup_epochs:
         recon, vq_loss = model(source_imgs)
         losses = compute_losses(recon, target_imgs, vq_loss, vgg, adv_loss=None, epoch=None, config=config)
