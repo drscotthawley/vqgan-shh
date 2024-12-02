@@ -25,3 +25,15 @@ pip install -e .
 ```
 
 See `./train-vqgan.py --help` for options.
+
+## Example Outputs
+
+After training for 6 hours on a Razer Blade 16" with a NVIDIA 4090-mobile (16 GB VRAM), we see these results:
+
+### Reconstructed Images:
+![Example image output](examples/example_demo.png)
+
+Top row: Input images. Bottom row: Reconstructions.
+
+### Codebook Vectors
+![Example codebook vector histograms](examples/example_histogram.png)
