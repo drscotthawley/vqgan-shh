@@ -3,6 +3,9 @@ from torch.utils.checkpoint import checkpoint
 import torch.nn as nn
 import torch.nn.functional as F
 from vector_quantize_pytorch import VectorQuantize
+import warnings
+warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True") # annoying warnings when grad checkpointing. it's fine, really
+
 
 class ResidualBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, use_checkpoint=False):
@@ -38,8 +41,9 @@ class ResidualBlock(nn.Module):
 
     def forward(self, x):
         if self.use_checkpoint and self.training:
-            return checkpoint(self._forward, x)
+            return checkpoint(self._forward, x, use_reentrant=False)
         return self._forward(x)
+
 
 class ImprovedLucidVQVAE(nn.Module):
     def __init__(self, in_channels=3, hidden_channels=256, num_downsamples=3, 
@@ -117,15 +121,16 @@ class ImprovedLucidVQVAE(nn.Module):
         
     def encode(self, x):
         if self.use_checkpoint and self.training:
-            return checkpoint(self.encoder, x)
+            return checkpoint(self.encoder, x, use_reentrant=False)
         return self.encoder(x)
         
     def decode(self, x):
         if self.use_checkpoint and self.training:
-            return checkpoint(self.decoder, x)
+            return checkpoint(self.decoder, x, use_reentrant=False)
         return self.decoder(x)
         
     def forward(self, x):
+            
         z = self.encode(x)
         z = z.permute(0, 2, 3, 1)
         z = z.reshape(-1, z.shape[-1])

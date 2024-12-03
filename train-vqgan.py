@@ -21,17 +21,6 @@ import io
 import tempfile
 import numpy as np
 
-
-# model_style = 'lucid'  # Change to 'old', 'v2', or 'lucid'
-# if model_style == 'old':
-#     from attention_vq_unet import AttentionVQUNet
-# elif model_style == 'v2':
-#     from attention_vq_unet2 import AttentionVQUNet2
-# else:
-#     from lucid_vqvae import ImprovedLucidVQVAE
-
-# from adversarial import AdversarialLoss
-
 from vqgan_shh.lucid_vqvae import ImprovedLucidVQVAE
 from vqgan_shh.adversarial import AdversarialLoss
 
@@ -394,7 +383,7 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     # Training parameters
-    parser.add_argument('--batch-size', type=int, default=84)
+    parser.add_argument('--batch-size', type=int, default=84) # for 16GB VRAM, 64x64 images, w/o grad checkpointing. For 128x128, set to 48 and turn on grad ckpt
     parser.add_argument('--epochs', type=int, default=1000000, help='number of epochs. (just let it keep training for hours/days/weeks/etc.)')
     parser.add_argument('--base-lr', type=float, default=1e-4, help='base learning rate for batch size of 32')
     parser.add_argument('--image-size', type=int, default=64, help='will rescale images to squares of (image-size, image-size)')
