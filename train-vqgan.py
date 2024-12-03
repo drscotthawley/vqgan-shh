@@ -280,14 +280,14 @@ def train_epoch(model, vgg, loader, optimizer, d_optimizer, device, epoch, adv_l
     return {k: v / len(loader) for k, v in epoch_losses.items()}
 
 
-# def glamp(x, min_val=0, max_val=1, g=1.0): # g >=1 means normal clamp
-#     # soft clamp, see https://sigmoid.social/@drscotthawley/110545005227110916
-#     # ONLY using this for viz of recon images, nowhere else
-#     if g >= 1.0: 
-#         return torch.clamp(x, min_val, max_val)
-#     glamped = (1 - g) * torch.tanh(x) + g * torch.clamp(x, -1, 1)
-#     rescaled = (glamped + 1) / 2 * (max_val - min_val) + min_val  # Rescale to [min_val, max_val]
-#     return rescaled
+def glamp(x, min_val=0, max_val=1, g=1.0): # g >=1 means normal clamp
+    # soft clamp, see https://sigmoid.social/@drscotthawley/110545005227110916
+    # ONLY using this for viz of recon images, nowhere else
+    if g >= 1.0: 
+        return torch.clamp(x, min_val, max_val)
+    glamped = (1 - g) * torch.tanh(x) + g * torch.clamp(x, -1, 1)
+    rescaled = (glamped + 1) / 2 * (max_val - min_val) + min_val  # Rescale to [min_val, max_val]
+    return rescaled
 
 
 
