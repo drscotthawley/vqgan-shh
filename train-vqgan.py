@@ -131,24 +131,6 @@ def get_total_loss(losses, config=None):
     return total
 
 
-# two diagnostics for the discriminator
-def get_discriminator_stats(adv_loss, real_images, fake_images):
-    with torch.no_grad():
-        d_real = adv_loss.discriminator(real_images).mean()
-        d_fake = adv_loss.discriminator(fake_images).mean()
-        return {
-            'd_real_mean': d_real.item(),
-            'd_fake_mean': d_fake.item(),
-            'd_conf_gap': (d_real - d_fake).item()
-        }
-def get_gradient_stats(discriminator):
-    total_norm = 0.0
-    for p in discriminator.parameters():
-        if p.grad is not None:
-            total_norm += p.grad.data.norm(2).item() ** 2
-    return {'d_grad_norm': math.sqrt(total_norm)}
-
-
 
 def get_discriminator_stats(adv_loss, real_images, fake_images):
     with torch.no_grad():
@@ -199,8 +181,8 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
         
 
         if is_train and adv_loss is not None:
-            for _ in range(3):  # Train D multiple times per batch        
-                recon, vq_loss = model(source_imgs)  # Get fresh recons
+            recon, vq_loss = model(source_imgs)  
+            for _ in range(1):  # Train D this many times per batch        
                 recon = recon.detach()  # Detach since we only need for D training
                 d_loss, real_features = adv_loss.discriminator_loss(target_imgs, recon)
                 d_stats = get_discriminator_stats(adv_loss, target_imgs, recon)
@@ -208,6 +190,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
 
                 d_optimizer.zero_grad()
                 d_loss.backward()
+                nn.utils.clip_grad_norm_(adv_loss.discriminator.parameters(), max_norm=1.0)  
                 grad_stats = get_gradient_stats(adv_loss.discriminator)
                 grad_stats_list.append(grad_stats)  
                 d_losses.append(d_loss.item())  
@@ -215,7 +198,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
 
         # Train generator (less frequently)
         g_losses = {}
-        if not is_train or batch_idx % 2 == 0:  # Update G every 3rd batch
+        if not is_train or batch_idx % 1 == 0:  # Update G every so many batches
             recon, vq_loss = model(source_imgs)
             losses = compute_losses(recon, target_imgs, vq_loss, vgg, adv_loss, epoch, config=config)
             losses['total'] = get_total_loss(losses, config)
@@ -396,8 +379,8 @@ def main():
     parser.add_argument('--lambda-mse', type=float, default=0.5, help="regularization param for MSE loss")
     parser.add_argument('--lambda-vq', type=float, default=0.25, help="reg factor mult'd by VQ commitment loss")
     parser.add_argument('--lambda-perc', type=float, default=2e-4, help="regularization param for perceptual loss")
-    parser.add_argument('--lambda-spec', type=float, default=1e-4,  help="regularization param for spectral loss (1e-4='almost off')")
-    parser.add_argument('--lambda-adv', type=float, default=0.1,  help="regularization param for adversarial loss")
+    parser.add_argument('--lambda-spec', type=float, default=1e-4,  help="regularization param for spectral loss (1e-4='almost off')") # with lambda_spec=0, spec_loss serves as an independent metric
+    parser.add_argument('--lambda-adv', type=float, default=0.03,  help="regularization param for G part of adversarial loss")
     parser.add_argument('--no-wandb', action='store_true', help='disable wandb logging')
 
     # Model parameters
@@ -440,7 +423,7 @@ def main():
     # Descriminator for adversarial loss
     adv_loss = AdversarialLoss(device, use_checkpoint=not args.no_grad_ckpt).to(device)  # device twice may be overkill 
     d_optimizer = optim.Adam(adv_loss.discriminator.parameters(),  weight_decay=1e-5,
-                            lr=args.learning_rate * 0.1)  # maybe different from G
+                            lr=args.learning_rate * 0.1)  # D LR. maybe different LR from G. 
     # def d_lr_lambda(epoch, warmup_epochs=args.warmup_epochs, ramp_epochs=10):   # turn on Descriminator slowly rather than a sudden jump
     #     if epoch < warmup_epochs: return 0.0
     #     if epoch < warmup_epochs + ramp_epochs: return 1e-6 + (1.0 - 1e-6) * (epoch - warmup_epochs) / ramp_epochs
