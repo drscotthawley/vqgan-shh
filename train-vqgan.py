@@ -413,6 +413,7 @@ def main():
     parser.add_argument('--vq-embedding-dim', type=int, default=16*16, help='dims of codebook vectors')
     parser.add_argument('--num-downsamples', type=int, default=2, help='total downsampling is 2**[this]')
     parser.add_argument('--project-name', type=str, default="vqgan-shh", help='WandB project name')
+    parser.add_argument('--no-grad-ckpt', action='store_true', help='disable gradient checkpointing (disabled uses more memory but faster)') 
 
     args = parser.parse_args()
     args.learning_rate = args.base_lr * math.sqrt(args.batch_size / 32)
@@ -433,7 +434,8 @@ def main():
         hidden_channels=args.hidden_channels,
         num_downsamples=args.num_downsamples,
         vq_num_embeddings=args.vq_num_embeddings,
-        vq_embedding_dim=args.vq_embedding_dim
+        vq_embedding_dim=args.vq_embedding_dim,
+        use_checkpoint=not args.no_grad_ckpt,  # checkpointing uses less VRAM but is a bit slower
     ).to(device)
     
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=1e-5)
