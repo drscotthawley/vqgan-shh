@@ -113,7 +113,7 @@ def compute_losses(recon, target_imgs, vq_loss, vgg, adv_loss=None, epoch=None, 
     }
     
     # Only add adversarial losses after warmup
-    if adv_loss is not None and epoch > config.warmup_epochs:
+    if adv_loss is not None and epoch >= config.warmup_epochs:
         d_loss, real_features = adv_loss.discriminator_loss(target_imgs, recon)
         g_loss = adv_loss.generator_loss(recon, real_features)
         losses['d_loss'] = d_loss
@@ -176,7 +176,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
     target_imgs = source_imgs
 
     # Pre-warmup behavior - sectioned this off b/c one time I broke everything when I added the GAN part. 
-    if epoch <= config.warmup_epochs:
+    if epoch < config.warmup_epochs:
         recon, vq_loss = model(source_imgs)
         losses = compute_losses(recon, target_imgs, vq_loss, vgg, adv_loss=None, epoch=None, config=config)
         losses['total'] = get_total_loss(losses, config)
@@ -383,7 +383,7 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     # Training parameters
-    parser.add_argument('--batch-size', type=int, default=84) # for 16GB VRAM, 64x64 images, w/o grad checkpointing. For 128x128, set to 48 and turn on grad ckpt
+    parser.add_argument('--batch-size', type=int, default=84) # for 16GB VRAM, 64x64 images, w/o grad checkpointing. For 128x128, set to 56 and turn on grad ckpt
     parser.add_argument('--epochs', type=int, default=1000000, help='number of epochs. (just let it keep training for hours/days/weeks/etc.)')
     parser.add_argument('--base-lr', type=float, default=1e-4, help='base learning rate for batch size of 32')
     parser.add_argument('--image-size', type=int, default=64, help='will rescale images to squares of (image-size, image-size)')
@@ -432,10 +432,15 @@ def main():
     lambda1 = lambda epoch: max(min_lr / args.learning_rate, 0.97 ** epoch)
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
-    # descriminator  for adv loss
-    adv_loss = AdversarialLoss(device).to(device)  # device twice may be overkill 
+    # Descriminator for adversarial loss
+    adv_loss = AdversarialLoss(device, use_checkpoint=not args.no_grad_ckpt).to(device)  # device twice may be overkill 
     d_optimizer = optim.Adam(adv_loss.discriminator.parameters(),  weight_decay=1e-5,
                             lr=args.learning_rate * 0.1)  # 10x smaller than G
+    def d_lr_lambda(epoch, warmup_epochs=args.warmup_epochs, ramp_epochs=10):   # turn on Descriminator slowly rather than a sudden jump
+        if epoch < warmup_epochs: return 0.0
+        if epoch < warmup_epochs + ramp_epochs: return 1e-6 + (1.0 - 1e-6) * (epoch - warmup_epochs) / ramp_epochs
+        return 0.97 ** (epoch - warmup_epochs - ramp_epochs)  # Match main scheduler's decay
+    d_scheduler = optim.lr_scheduler.LambdaLR(d_optimizer, lr_lambda=d_lr_lambda)
                             
     start_epoch = 0
     if args.checkpoint is not None:
@@ -476,6 +481,7 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
             }, ckpt_path)
         scheduler.step()
+        if epoch >= args.warmup_epochs: d_scheduler.step()
 
 
 if __name__ == '__main__':
