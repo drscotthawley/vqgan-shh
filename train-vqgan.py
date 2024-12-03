@@ -174,6 +174,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
     """Process a single batch and return losses."""
     source_imgs = batch[0].to(device)
     target_imgs = source_imgs
+    count = 1 # we train the generator on 1 batch unless otherwise noted
 
     # Pre-warmup behavior - sectioned this off b/c one time I broke everything when I added the GAN part. 
     if epoch < config.warmup_epochs:
@@ -186,8 +187,8 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
             losses['total'].backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            
-        return {k: v.item() for k, v in losses.items()}, recon
+    
+        return {k: v.item() for k, v in losses.items()}, recon, count
 
     # Post-warmup behavior
     else:
@@ -196,11 +197,11 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
         d_stats_list = []
         grad_stats_list = []
         
-        recon, vq_loss = model(source_imgs)  # Get fresh recons
-        recon = recon.detach()  # Detach since we only need for D training
+
         if is_train and adv_loss is not None:
-            for _ in range(3):  # Train D multiple times per batch
-                # Reuse the same reconstruction for D training
+            for _ in range(3):  # Train D multiple times per batch        
+                recon, vq_loss = model(source_imgs)  # Get fresh recons
+                recon = recon.detach()  # Detach since we only need for D training
                 d_loss, real_features = adv_loss.discriminator_loss(target_imgs, recon)
                 d_stats = get_discriminator_stats(adv_loss, target_imgs, recon)
                 d_stats_list.append(d_stats)  
@@ -226,6 +227,8 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
                 optimizer.step()
                 
             g_losses = {k: v.item() for k, v in losses.items()}
+        else:
+            count = 0
 
         # Combine all losses and stats for logging
         combined_losses = g_losses
@@ -239,7 +242,7 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
             combined_losses.update(avg_d_stats)
             combined_losses.update(avg_grad_stats)
 
-        return combined_losses, recon
+        return combined_losses, recon, count
 
 
 
@@ -248,10 +251,11 @@ def train_epoch(model, vgg, loader, optimizer, d_optimizer, device, epoch, adv_l
     # Start with basic losses
     epoch_losses = {k: 0 for k in ['mse', 'vq', 'perceptual', 'spectral', 'total']}
     
+    total_batches = 0
     pbar = tqdm(loader, desc=f'Epoch {epoch}')
     for batch_idx, batch in enumerate(pbar):
-        batch_losses, recon = process_batch(model, vgg, batch, device, True, optimizer, d_optimizer=d_optimizer, adv_loss=adv_loss, epoch=epoch, config=config, batch_idx=batch_idx )
-        
+        batch_losses, recon, count = process_batch(model, vgg, batch, device, True, optimizer, d_optimizer=d_optimizer, adv_loss=adv_loss, epoch=epoch, config=config, batch_idx=batch_idx )
+        total_batches += count
         # Only update losses that exist in batch_losses
         epoch_losses.update({k: epoch_losses[k] + batch_losses[k] for k in batch_losses.keys() & epoch_losses.keys()})
         
@@ -266,7 +270,7 @@ def train_epoch(model, vgg, loader, optimizer, d_optimizer, device, epoch, adv_l
             wandb.log({f'batch/{k}_loss': v for k, v in batch_losses.items()} | {'epoch':epoch})
 
 
-    return {k: v / len(loader) for k, v in epoch_losses.items()}
+    return {k: v / total_batches for k, v in epoch_losses.items()}
 
 
 def glamp(x, min_val=0, max_val=1, g=1.0): # g >=1 means normal clamp
@@ -352,9 +356,10 @@ def validate(model, vgg, loader, device, epoch, adv_loss=None, config=None):
     # Start with basic losses, just like in train_epoch
     val_losses = {k: 0 for k in ['mse', 'vq', 'perceptual', 'spectral', 'total']}
     
+    total_batches = 0
     for batch_idx, batch in enumerate(loader):
-        batch_losses, recon = process_batch(model, vgg, batch, device, False, adv_loss=adv_loss, epoch=epoch, config=config)
-        
+        batch_losses, recon, count = process_batch(model, vgg, batch, device, False, adv_loss=adv_loss, epoch=epoch, config=config)
+        total_batches += count 
         # Only update losses that exist in batch_losses
         val_losses.update({k: val_losses[k] + batch_losses[k] for k in batch_losses.keys() & val_losses.keys()})
         
@@ -377,7 +382,7 @@ def validate(model, vgg, loader, device, epoch, adv_loss=None, config=None):
         viz_codebook(model, config, epoch)
     
     model.train(was_training)
-    return {k: v / len(loader) for k, v in val_losses.items()}
+    return {k: v / total_batches for k, v in val_losses.items()}
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -435,12 +440,12 @@ def main():
     # Descriminator for adversarial loss
     adv_loss = AdversarialLoss(device, use_checkpoint=not args.no_grad_ckpt).to(device)  # device twice may be overkill 
     d_optimizer = optim.Adam(adv_loss.discriminator.parameters(),  weight_decay=1e-5,
-                            lr=args.learning_rate * 0.1)  # 10x smaller than G
-    def d_lr_lambda(epoch, warmup_epochs=args.warmup_epochs, ramp_epochs=10):   # turn on Descriminator slowly rather than a sudden jump
-        if epoch < warmup_epochs: return 0.0
-        if epoch < warmup_epochs + ramp_epochs: return 1e-6 + (1.0 - 1e-6) * (epoch - warmup_epochs) / ramp_epochs
-        return 0.97 ** (epoch - warmup_epochs - ramp_epochs)  # Match main scheduler's decay
-    d_scheduler = optim.lr_scheduler.LambdaLR(d_optimizer, lr_lambda=d_lr_lambda)
+                            lr=args.learning_rate * 0.1)  # maybe different from G
+    # def d_lr_lambda(epoch, warmup_epochs=args.warmup_epochs, ramp_epochs=10):   # turn on Descriminator slowly rather than a sudden jump
+    #     if epoch < warmup_epochs: return 0.0
+    #     if epoch < warmup_epochs + ramp_epochs: return 1e-6 + (1.0 - 1e-6) * (epoch - warmup_epochs) / ramp_epochs
+    #     return 0.97 ** (epoch - warmup_epochs - ramp_epochs)  # Match main scheduler's decay
+    # d_scheduler = optim.lr_scheduler.LambdaLR(d_optimizer, lr_lambda=d_lr_lambda)
                             
     start_epoch = 0
     if args.checkpoint is not None:
@@ -481,7 +486,7 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
             }, ckpt_path)
         scheduler.step()
-        if epoch >= args.warmup_epochs: d_scheduler.step()
+        # if epoch >= args.warmup_epochs: d_scheduler.step()
 
 
 if __name__ == '__main__':
