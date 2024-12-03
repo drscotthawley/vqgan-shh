@@ -1,5 +1,5 @@
 #!/bin/env python3 
-
+import os
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 import torch
@@ -449,6 +449,8 @@ def main():
     if not args.no_wandb:
         wandb.init(project=args.project_name)
         wandb.config.update(vars(args))
+
+    os.makedirs('checkpoints', exist_ok=True) # place for saving checkpoints
     
     # Training loop
     for epoch in range(start_epoch, args.epochs):
