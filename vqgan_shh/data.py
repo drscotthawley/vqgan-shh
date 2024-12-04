@@ -1,17 +1,8 @@
-#!/bin/env python3 
 import os
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-import torch
-torch.set_float32_matmul_precision('high')
 import math
-import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 import random
-import io
-import tempfile
-import numpy as np
 from PIL import Image
 
 
