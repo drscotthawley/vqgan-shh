@@ -2,9 +2,6 @@ import torch
 import math
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.checkpoint import checkpoint
-import warnings
-warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True") # annoying warnings when grad checkpointing. it's fine, really
 
 from .models import PatchDiscriminator
 
@@ -63,6 +60,7 @@ def compute_losses(recon, target_imgs, vq_loss, vgg, adv_loss=None, epoch=None, 
         
     return losses
 
+
 def get_total_loss(losses, config=None):
     """Compute weighted sum of losses."""
     total = config.lambda_mse*losses['mse'] + config.lambda_vq*losses['vq'] + \
@@ -71,6 +69,7 @@ def get_total_loss(losses, config=None):
     if 'g_loss' in losses:
         total = total + losses['g_loss']
     return total
+
 
 
 #------ not used as losses but are kind of loss-like:
