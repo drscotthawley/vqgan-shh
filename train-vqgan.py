@@ -9,14 +9,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torchvision.models import vgg16
 from torchvision.utils import make_grid
-import torch.nn.functional as F
 import wandb
 from tqdm.auto import tqdm
-import random
 import argparse
 import matplotlib.pyplot as plt
-import io
-import numpy as np
 
 
 from vqgan_shh.data import create_loaders
@@ -27,7 +23,7 @@ from vqgan_shh.viz import viz_codebook
 
 def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_optimizer=None, 
                  adv_loss=None, epoch=None, config=None, batch_idx=0):
-    """Process a single batch and return losses."""
+    """Process a single batch and return losses.  Called by training and/or validation"""
     source_imgs = batch[0].to(device)
     target_imgs = source_imgs
     count = 1 # we train the generator on 1 batch unless otherwise noted
@@ -242,7 +238,6 @@ def main():
 
     os.makedirs('checkpoints', exist_ok=True) 
     
-    # Training loop
     for epoch in range(start_epoch, args.epochs):
         if epoch == args.warmup_epochs: print("*** WARMUP PERIOD FINISHED. Engaging adversarial training. ***")
 
