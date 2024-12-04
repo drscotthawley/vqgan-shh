@@ -59,22 +59,17 @@ class VQVAE(nn.Module):
         in_channels_current = in_channels
         for i in range(num_downsamples):
             out_channels = hidden_channels * (2 ** i)
-            encoder_layers.append(
-                EncDecResidualBlock(in_channels_current, out_channels, 
-                             stride=2, use_checkpoint=use_checkpoint)
-            )
-            encoder_layers.append(
-                EncDecResidualBlock(out_channels, out_channels, 
-                             stride=1, use_checkpoint=use_checkpoint)
-            )
+            encoder_layers.append(EncDecResidualBlock(in_channels_current, out_channels, 
+                                stride=2, use_checkpoint=use_checkpoint))
+            encoder_layers.append(EncDecResidualBlock(out_channels, out_channels, 
+                                stride=1, use_checkpoint=use_checkpoint))
             in_channels_current = out_channels
-            
-        encoder_layers.append(
-            EncDecResidualBlock(in_channels_current, vq_embedding_dim, 
-                         stride=1, use_checkpoint=use_checkpoint)
-        )
+                
+        encoder_layers.append(EncDecResidualBlock(in_channels_current, vq_embedding_dim, 
+                            stride=1, use_checkpoint=use_checkpoint))
+        encoder_layers.append(nn.Conv2d(vq_embedding_dim, vq_embedding_dim, 1)) # final conv2d undoes swish at end of EncDecResidualBlock
         self.encoder = nn.Sequential(*encoder_layers)
-        
+
         # Vector Quantizer
         self.vq = VectorQuantize(
             dim=vq_embedding_dim,
