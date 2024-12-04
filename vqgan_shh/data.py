@@ -1,5 +1,4 @@
 import os
-import math
 from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets, transforms
 import random
