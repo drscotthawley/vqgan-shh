@@ -1,12 +1,14 @@
 #!/bin/env python3 
 import os
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning) # re. NATTEN's non-stop FutureWarnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 import torch
 torch.set_float32_matmul_precision('high')
 import math
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+from torchvision import datasets, transforms
 from torchvision.models import vgg16
 from torchvision.utils import make_grid
 import torch.nn.functional as F
@@ -16,13 +18,13 @@ import random
 import argparse
 import matplotlib.pyplot as plt
 import io
+import tempfile
 import numpy as np
-
+from PIL import Image
 
 from vqgan_shh.data import create_loaders
 from vqgan_shh.models import VQVAE
 from vqgan_shh.losses import *
-from vqgan_shh.viz import viz_codebook
 
 
 def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_optimizer=None, 
@@ -49,8 +51,11 @@ def process_batch(model, vgg, batch, device, is_train=True, optimizer=None, d_op
     # Post-warmup behavior
     else:
         # Train discriminator multiple times
-        d_losses, d_stats_list, grad_stats_list = [], [], []
+        d_losses = []
+        d_stats_list = []
+        grad_stats_list = []
         
+
         if is_train and adv_loss is not None:
             recon, vq_loss = model(source_imgs)  
             for _ in range(1):  # Train D this many times per batch        
@@ -123,7 +128,84 @@ def train_epoch(model, vgg, loader, optimizer, d_optimizer, device, epoch, adv_l
         if batch_idx % 100 == 0 and not config.no_wandb:
             wandb.log({f'batch/{k}_loss': v for k, v in batch_losses.items()} | {'epoch':epoch})
 
+
     return {k: v / total_batches for k, v in epoch_losses.items()}
+
+
+def glamp(x, min_val=0, max_val=1, g=1.0): # g >=1 means normal clamp
+    # soft clamp, see https://sigmoid.social/@drscotthawley/110545005227110916
+    # ONLY using this for viz of recon images, nowhere else
+    if g >= 1.0: 
+        return torch.clamp(x, min_val, max_val)
+    glamped = (1 - g) * torch.tanh(x) + g * torch.clamp(x, -1, 1)
+    rescaled = (glamped + 1) / 2 * (max_val - min_val) + min_val  # Rescale to [min_val, max_val]
+    return rescaled
+
+
+
+def viz_codebook(model, config, epoch):
+    if config.no_wandb: return
+    # Extract VQ codebook vectors
+    codebook_vectors = model.vq.codebook.detach().cpu().numpy()
+    
+    # Reshape the codebook vectors to the desired shape
+    codebook_image = codebook_vectors.reshape(config.vq_num_embeddings, config.vq_embedding_dim)
+    
+    # Create an image of the codebook vectors using matplotlib
+    plt.figure(figsize=(16, 4))
+    plt.imshow(codebook_image.T, aspect='auto', cmap='viridis')
+    plt.colorbar()
+    plt.title('VQ Codebook Vectors')
+    plt.ylabel('Embedding Dimension')
+    plt.xlabel('Codebook Index')
+    
+    # Adjust layout to remove extra margins and whitespace
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.1)
+    
+    # Save the image to a temporary file
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+        plt.savefig(tmpfile.name, format='png', bbox_inches='tight', pad_inches=0)
+        tmpfile.flush()
+        
+        # Log the image to wandb
+        wandb.log({
+            'codebook/image': wandb.Image(tmpfile.name, caption=f'Epoch {epoch} - VQ Codebook Vectors')
+        })
+    
+    plt.close()
+    
+    # Compute the magnitudes of the codebook vectors
+    magnitudes = np.linalg.norm(codebook_vectors, axis=1)
+
+    # Create a figure with one row and two columns for the histograms
+    fig, axs = plt.subplots(1, 2, figsize=(16, 4))
+
+    # Plot the histogram of magnitudes
+    axs[0].hist(magnitudes, bins=50, color='blue', edgecolor='black')
+    axs[0].set_title('Histogram of Codebook Vector Magnitudes')
+    axs[0].set_xlabel('Magnitude')
+    axs[0].set_ylabel('Frequency')
+
+    # Plot the histogram of elements
+    axs[1].hist(codebook_vectors.flatten(), bins=200, color='blue', edgecolor='black')
+    axs[1].set_title('Histogram of Codebook Vector Elements')
+    axs[1].set_xlabel('Element Value')
+    axs[1].set_ylabel('Frequency')
+
+    # Adjust layout to remove extra margins and whitespace
+    plt.tight_layout()
+
+    # Save the histogram image to a temporary file
+    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmpfile:
+        plt.savefig(tmpfile.name, format='png', bbox_inches='tight', pad_inches=0)
+        tmpfile.flush()
+
+        # Log the histogram image to wandb
+        wandb.log({
+            'codebook/histograms': wandb.Image(tmpfile.name, caption=f'Epoch {epoch} - Histograms of Codebook Vectors')
+        })
+
+    plt.close()
 
 
 @torch.no_grad()
@@ -147,7 +229,7 @@ def validate(model, vgg, loader, device, epoch, adv_loss=None, config=None):
         
         if batch_idx == 0 and not config.no_wandb:  # Log first batch visualizations
             orig = batch[0][:8].to(device)
-            recon = torch.clamp(recon[:8], orig.min(), orig.max()) 
+            recon = glamp(recon[:8], orig.min(), orig.max())  # Note: assumes glamp exists
             viz_images = torch.cat([orig, recon])
             wandb.log({'epoch':epoch,
                 'demo/examples': wandb.Image(make_grid(viz_images, nrow=8, normalize=True), 
@@ -160,8 +242,6 @@ def validate(model, vgg, loader, device, epoch, adv_loss=None, config=None):
     
     model.train(was_training)
     return {k: v / total_batches for k, v in val_losses.items()}
-
-
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -226,9 +306,14 @@ def main():
     adv_loss = AdversarialLoss(device, use_checkpoint=not args.no_grad_ckpt).to(device)  # device twice may be overkill 
     d_optimizer = optim.Adam(adv_loss.discriminator.parameters(),  weight_decay=1e-5,
                             lr=args.learning_rate * 0.1)  # D LR. maybe different LR from G. 
-                          
+    # def d_lr_lambda(epoch, warmup_epochs=args.warmup_epochs, ramp_epochs=10):   # turn on Descriminator slowly rather than a sudden jump
+    #     if epoch < warmup_epochs: return 0.0
+    #     if epoch < warmup_epochs + ramp_epochs: return 1e-6 + (1.0 - 1e-6) * (epoch - warmup_epochs) / ramp_epochs
+    #     return 0.97 ** (epoch - warmup_epochs - ramp_epochs)  # Match main scheduler's decay
+    # d_scheduler = optim.lr_scheduler.LambdaLR(d_optimizer, lr_lambda=d_lr_lambda)
+                            
     start_epoch = 0
-    if args.checkpoint is not None: # Start from a checkpoint
+    if args.checkpoint is not None:
         checkpoint = torch.load(args.checkpoint, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -240,7 +325,7 @@ def main():
         wandb.init(project=args.project_name)
         wandb.config.update(vars(args))
 
-    os.makedirs('checkpoints', exist_ok=True) 
+    os.makedirs('checkpoints', exist_ok=True) # place for saving checkpoints
     
     # Training loop
     for epoch in range(start_epoch, args.epochs):
@@ -266,6 +351,7 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict(),
             }, ckpt_path)
         scheduler.step()
+        # if epoch >= args.warmup_epochs: d_scheduler.step()
 
 
 if __name__ == '__main__':
