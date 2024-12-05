@@ -26,12 +26,14 @@ pip install -e .
 
 See `./train-vqgan.py --help` for options.
 
-## Example Outputs
+## Example Results
 
-After training for 6 hours on a Razer Blade 16" with a NVIDIA 4090-mobile (16 GB VRAM), we see the following results.  They're not "amazing," but perhaps training for longer will help. 
+Trained using a Razer Blade 16" with a NVIDIA 4090-mobile (16 GB VRAM) for 6 hours.  
+
+Inputs: 128x128x3, downsampled to 32x32, with 1024 codebook vectors of 256 elements each.
 
 
-### Reconstructed Images:
+### Reconstructed Images (128x128x3):
 ![Example image output](examples/example_demo.png)
 
 Top row: Input images. Bottom row: Reconstructions.
@@ -42,4 +44,3 @@ Top row: Input images. Bottom row: Reconstructions.
 ## TODO:
 - Add attention aka "non-local blocks"
 - Make sure the GAN part is really helping/learning
-  
