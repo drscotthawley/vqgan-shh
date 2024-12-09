@@ -163,10 +163,7 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     
     # Training parameters
-    # my tests:
-    #  --image-size=64 --batch-size=84 --warmup-epochs=15
-    #  --image-size=128 --batch-size=56 --warmup-epochs=15
-    parser.add_argument('--batch-size', type=int, default=56) # for 16GB VRAM, 64x64 images, w/o grad checkpointing. For 128x128, set to 56 and turn on grad ckpt
+    parser.add_argument('--batch-size', type=int, default=48) 
     parser.add_argument('--data', type=str, default=None, help='path to top-level-directory containing custom image data. If not specified, uses Flowers102')
     parser.add_argument('--epochs', type=int, default=1000000, help='number of epochs. (just let it keep training for hours/days/weeks/etc.)')
     # for wandb sweeps
@@ -174,10 +171,10 @@ def main():
     parser.add_argument('--base-lr', type=float, default=1e-4, help='base learning rate for batch size of 32')
     parser.add_argument('--image-size', type=int, default=128, help='will rescale images to squares of (image-size, image-size)')
     parser.add_argument('--warmup-epochs', type=int, default=15, help='number of epochs before enabling adversarial loss')   
-    parser.add_argument('--lambda-mse', type=float, default=0.5, help="regularization param for MSE loss")
+    parser.add_argument('--lambda-mse', type=float, default=0.25, help="regularization param for MSE loss")
     parser.add_argument('--lambda-vq', type=float, default=0.25, help="reg factor mult'd by VQ commitment loss")
     parser.add_argument('--lambda-perc', type=float, default=2e-4, help="regularization param for perceptual loss")
-    parser.add_argument('--lambda-spec', type=float, default=1e-4,  help="regularization param for spectral loss (1e-4='almost off')") # with lambda_spec=0, spec_loss serves as an independent metric
+    parser.add_argument('--lambda-spec', type=float, default=1e-3,  help="regularization param for spectral loss (1e-4='almost off')") # with lambda_spec=0, spec_loss serves as an independent metric
     parser.add_argument('--lambda-adv', type=float, default=0.03,  help="regularization param for G part of adversarial loss")
     parser.add_argument('--no-wandb', action='store_true', help='disable wandb logging')
 
