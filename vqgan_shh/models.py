@@ -6,36 +6,158 @@ from torch.nn.utils import spectral_norm
 from vector_quantize_pytorch import VectorQuantize
 import warnings
 warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True") # annoying warnings when grad checkpointing. it's fine, really
+from flash_attn import flash_attn_func
+
+    
+try:
+    import natten
+    print("Using NATTEN version ",natten.__version__)
+except ImportError:
+    warnings.warn("Warning: NATTEN not found. Running without.")
+    natten = None
+
+
+
+
+class Normalize(nn.Module):
+    def __init__(self, num_channels, num_groups=32, eps=1e-6, affine=True):
+        super().__init__()
+        self.norm = nn.GroupNorm(num_groups=num_groups, 
+                                num_channels=num_channels, 
+                                eps=eps, 
+                                affine=affine)
+
+    def forward(self, x):
+        return self.norm(x)
+    
+class AttnBlock(nn.Module):# Use the AttnBlock from the official VQGAN code
+    def __init__(self, in_channels):
+        super().__init__()
+        self.in_channels = in_channels
+        self.norm = Normalize(in_channels)
+        self.q = torch.nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+        self.k = torch.nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+        self.v = torch.nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+        self.proj_out = torch.nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
+
+    def forward(self, x):
+        h_ = x
+        h_ = self.norm(h_)
+        q = self.q(h_)
+        k = self.k(h_)
+        v = self.v(h_)
+
+        # compute attention
+        b,c,h,w = q.shape
+        q = q.reshape(b,c,h*w)
+        q = q.permute(0,2,1)   # b,hw,c
+        k = k.reshape(b,c,h*w) # b,c,hw
+        w_ = torch.bmm(q,k)     # b,hw,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
+        w_ = w_ * (int(c)**(-0.5))
+        w_ = torch.nn.functional.softmax(w_, dim=2)
+
+        # attend to values
+        v = v.reshape(b,c,h*w)
+        w_ = w_.permute(0,2,1)   # b,hw,hw (first hw of k, second of q)
+        h_ = torch.bmm(v,w_)     # b, c,hw (hw of q) h_[b,c,j] = sum_i v[b,c,i] w_[b,i,j]
+        h_ = h_.reshape(b,c,h,w)
+
+        h_ = self.proj_out(h_)
+
+        return x+h_
+
+
+class NATTENBlock(nn.Module):
+    def __init__(self, dim, kernel_size=7, num_heads=8, init_scale=0.02):
+        super().__init__()
+        self.num_heads = num_heads
+        self.kernel_size = kernel_size
+        self.head_dim = dim // num_heads
+        self.scaling = (self.head_dim ** -0.5) * 0.5
+        
+        # Replace LayerNorm with GroupNorm
+        self.norm = nn.GroupNorm(num_groups=8, num_channels=dim)
+        self.qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.proj = nn.Linear(dim, dim, bias=False)
+        self.gamma = nn.Parameter(torch.zeros(1))
+        
+        # Initialize with smaller weights
+        nn.init.normal_(self.qkv.weight, std=init_scale)
+        nn.init.normal_(self.proj.weight, std=init_scale)
+        
+        if natten is None:
+            raise ImportError("Please install NATTEN: pip install natten")
+            
+    def _forward(self, x):
+        B, C, H, W = x.shape
+        identity = x
+        
+        # Apply GroupNorm (works in channel-first format)
+        x = self.norm(x)
+        
+        # Only permute once for the linear layers
+        x = x.permute(0, 2, 3, 1)  # B H W C
+        qkv = self.qkv(x)
+        qkv = qkv.reshape(B, H, W, 3, self.num_heads, self.head_dim)
+        qkv = qkv.permute(3, 0, 4, 1, 2, 5)  # 3 B heads H W dim
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        
+        attn = natten.functional.na2d_qk(q, k, self.kernel_size)
+        attn = attn.softmax(dim=-1)
+        x = natten.functional.na2d_av(attn, v, self.kernel_size)
+            
+        x = x.permute(0, 2, 3, 1, 4).reshape(B, H, W, C)
+        x = self.proj(x)
+        x = x.permute(0, 3, 1, 2)  # Back to B C H W
+        return identity + (x * self.gamma)  # Scaled attention plus identity
+        
+    def forward(self, x):
+        if x.requires_grad:
+            return checkpoint(self._forward, x, use_reentrant=False)
+        return self._forward(x)
+
 
 
 class EncDecResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, use_checkpoint=False):
+    def __init__(self, in_channels, out_channels, stride=1, use_checkpoint=False, attention='natten'):
         super().__init__()
         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1)
         self.norm1 = nn.GroupNorm(8, out_channels)
         self.silu = nn.SiLU()
         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
         self.norm2 = nn.GroupNorm(8, out_channels)
-        
+
         self.downsample = None
         if stride != 1 or in_channels != out_channels:
             self.downsample = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride),
                 nn.GroupNorm(8, out_channels)
             )
+
         self.use_checkpoint = use_checkpoint
-    
+        if attention == 'natten' and natten:
+            self.attn = NATTENBlock(out_channels)
+        elif attention == 'full':  
+            self.attn = AttnBlock(out_channels)
+        else:
+            self.attn = None
+
+
     def _forward(self, x):
         identity = x
         out = self.conv1(x)
         out = self.norm1(out)
         out = self.silu(out)
+
+        if self.attn:
+            out = self.attn(out) 
+
         out = self.conv2(out)
         out = self.norm2(out)
-        
+
         if self.downsample is not None:
             identity = self.downsample(x)
-        
+
         out += identity
         out = self.silu(out)
         return out
@@ -44,6 +166,8 @@ class EncDecResidualBlock(nn.Module):
         if self.use_checkpoint and self.training:
             return checkpoint(self._forward, x, use_reentrant=False)
         return self._forward(x)
+
+
 
 
 class VQVAE(nn.Module):
@@ -59,14 +183,18 @@ class VQVAE(nn.Module):
         in_channels_current = in_channels
         for i in range(num_downsamples):
             out_channels = hidden_channels * (2 ** i)
+            if i >= num_downsamples-2: 
+                attention = 'natten'
+            else: 
+                attention = None
             encoder_layers.append(EncDecResidualBlock(in_channels_current, out_channels, 
-                                stride=2, use_checkpoint=use_checkpoint))
+                                stride=2, use_checkpoint=use_checkpoint, attention=attention))
             encoder_layers.append(EncDecResidualBlock(out_channels, out_channels, 
-                                stride=1, use_checkpoint=use_checkpoint))
+                                stride=1, use_checkpoint=use_checkpoint, attention=attention))
             in_channels_current = out_channels
                 
         encoder_layers.append(EncDecResidualBlock(in_channels_current, vq_embedding_dim, 
-                            stride=1, use_checkpoint=use_checkpoint))
+                            stride=1, use_checkpoint=use_checkpoint, attention=attention))
         encoder_layers.append(nn.Conv2d(vq_embedding_dim, vq_embedding_dim, 1)) # final conv2d undoes swish at end of EncDecResidualBlock
         self.encoder = nn.Sequential(*encoder_layers)
 
@@ -87,7 +215,7 @@ class VQVAE(nn.Module):
         current_channels = hidden_channels * (2 ** (num_downsamples - 1))
         initial_layers = [
             nn.Conv2d(vq_embedding_dim, current_channels, 1),
-            EncDecResidualBlock(current_channels, current_channels, use_checkpoint=use_checkpoint)
+            EncDecResidualBlock(current_channels, current_channels, use_checkpoint=use_checkpoint, attention='full') # attn is cheap at this resolution
         ]
         decoder_layers.extend(initial_layers)
 
@@ -96,11 +224,14 @@ class VQVAE(nn.Module):
             out_channels = hidden_channels * (2 ** max(0, i - 1))
             if i == 0:
                 out_channels = hidden_channels
-                
+            if i > num_downsamples-2:
+                attention, mode = 'natten','bicubic'
+            else:
+                attention, mode = None, 'bilinear'
             block = [
-                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
-                EncDecResidualBlock(current_channels, out_channels, use_checkpoint=use_checkpoint),
-                EncDecResidualBlock(out_channels, out_channels, use_checkpoint=use_checkpoint)
+                nn.Upsample(scale_factor=2, mode=mode, align_corners=False),
+                EncDecResidualBlock(current_channels, out_channels, use_checkpoint=use_checkpoint, attention=attention),
+                EncDecResidualBlock(out_channels, out_channels, use_checkpoint=use_checkpoint, attention=None)
             ]
             decoder_layers.extend(block)
             current_channels = out_channels
