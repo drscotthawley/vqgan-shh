@@ -6,7 +6,7 @@ from torch.nn.utils import spectral_norm
 from vector_quantize_pytorch import VectorQuantize
 import warnings
 warnings.filterwarnings("ignore", message="None of the inputs have requires_grad=True") # annoying warnings when grad checkpointing. it's fine, really
-from flash_attn import flash_attn_func
+#from flash_attn import flash_attn_func
 
     
 try:
