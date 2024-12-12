@@ -12,6 +12,8 @@ from torchvision.utils import make_grid
 import wandb
 from tqdm.auto import tqdm
 import argparse
+import matplotlib 
+matplotlib.use('Agg') # need this to prevent tk errors
 import matplotlib.pyplot as plt
 
 
