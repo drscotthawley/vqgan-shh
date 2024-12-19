@@ -7,8 +7,8 @@ with open('requirements.txt') as f:
 setup(
     name="vqgan-shh",
     version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Scott H. Hawley",
+    author_email="scott@hyperstate.ai",
     description="A VQGAN implementation with adversarial training",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
